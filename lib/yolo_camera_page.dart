@@ -19,7 +19,10 @@ class YoloCameraPage extends StatefulWidget {
 
 class _YoloCameraPageState extends State<YoloCameraPage>
     with WidgetsBindingObserver {
-  final YoloDetector _detector = YoloDetector();
+  final YoloDetector _detector = YoloDetector(
+    confidenceThreshold: 0.7,
+    nmsThreshold: 0.1,
+  );
 
   CameraController? _cameraController;
   List<Detection> _detections = const [];

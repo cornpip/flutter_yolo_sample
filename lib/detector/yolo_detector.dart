@@ -13,8 +13,8 @@ import '../models/detection.dart';
 
 class YoloDetector {
   YoloDetector({
-    this.confidenceThreshold = 0.45,
-    this.nmsThreshold = 0.4,
+    this.confidenceThreshold = 0.5,
+    this.nmsThreshold = 0.2,
     this.debugSaveFrames = true,
   });
 
@@ -82,6 +82,7 @@ class YoloDetector {
     if (!_isInitialized || sendPort == null) {
       throw StateError('YoloDetector has not been initialized.');
     }
+    print("#### conf: $confidenceThreshold, nms: $nmsThreshold");
 
     final responsePort = ReceivePort();
     sendPort.send([
@@ -259,6 +260,7 @@ class _YoloIsolateHandler {
   int _letterboxPadY = 0;
   int _sourceWidth = 0;
   int _sourceHeight = 0;
+  bool _hasLoggedOutputs = false;
 
   late final Interpreter _interpreter;
   late final List<int> _inputShape;
@@ -522,30 +524,51 @@ class _YoloIsolateHandler {
     }
 
     int boxes = _outputShape[2];
-    int valuesPerBox = _outputShape[1];
+    int channels = _outputShape[1];
+    final isChannelFirst = channels < boxes;
 
     final detections = <Detection>[];
-    for (int i = 0; i < boxes; i++) {
-      final offset = i * valuesPerBox;
-      if (offset + valuesPerBox > outputBuffer.length) {
-        break;
+    if (debugSaveFrames && !_hasLoggedOutputs) {
+      // Log a few raw boxes to inspect scale (expected either 0~1 or pixel values).
+      final sampleCount = math.min(5, boxes);
+      for (int i = 0; i < sampleCount; i++) {
+        final x = _readChannelFirst(outputBuffer, channels, boxes, 0, i);
+        final y = _readChannelFirst(outputBuffer, channels, boxes, 1, i);
+        final w = _readChannelFirst(outputBuffer, channels, boxes, 2, i);
+        final h = _readChannelFirst(outputBuffer, channels, boxes, 3, i);
+        // ignore: avoid_print
+        print('YOLO raw box[$i]: x=$x, y=$y, w=$w, h=$h');
       }
+      // ignore: avoid_print
+      print(
+          'YOLO outputShape=$_outputShape (boxes=$boxes, channels=$channels, channelFirst=$isChannelFirst)');
+      _hasLoggedOutputs = true;
+    }
+    for (int i = 0; i < boxes; i++) {
+      final xCenter = _readChannelFirst(outputBuffer, channels, boxes, 0, i);
+      final yCenter = _readChannelFirst(outputBuffer, channels, boxes, 1, i);
+      final width = _readChannelFirst(outputBuffer, channels, boxes, 2, i);
+      final height = _readChannelFirst(outputBuffer, channels, boxes, 3, i);
 
-      final xCenter = outputBuffer[offset];
-      final yCenter = outputBuffer[offset + 1];
-      final width = outputBuffer[offset + 2];
-      final height = outputBuffer[offset + 3];
-
-      final hasObjectness = valuesPerBox > 5;
-      final objectness = hasObjectness ? outputBuffer[offset + 4] : 1.0;
+      final expectedWithObj = labels.length + 5; // x,y,w,h,obj + classes
+      final expectedWithoutObj = labels.length + 4; // x,y,w,h + classes
+      final hasObjectness =
+          channels == expectedWithObj || channels > expectedWithObj;
+      final objectness = hasObjectness
+          ? _sigmoid(
+              _readChannelFirst(outputBuffer, channels, boxes, 4, i),
+            )
+          : 1.0;
       final classStartIndex = hasObjectness ? 5 : 4;
 
       var bestClassScore = 0.0;
       var bestClassIndex = -1;
-      for (int j = classStartIndex; j < valuesPerBox; j++) {
-        final classScore = outputBuffer[offset + j];
-        if (classScore > bestClassScore) {
-          bestClassScore = classScore;
+      for (int j = classStartIndex; j < channels; j++) {
+        final classProb = _sigmoid(
+          _readChannelFirst(outputBuffer, channels, boxes, j, i),
+        );
+        if (classProb > bestClassScore) {
+          bestClassScore = classProb;
           bestClassIndex = j - classStartIndex;
         }
       }
@@ -563,14 +586,21 @@ class _YoloIsolateHandler {
           ? labels[bestClassIndex]
           : 'class $bestClassIndex';
       final rect = _buildBoundingBox(xCenter, yCenter, width, height);
-      detections.add(
-        Detection(
-          boundingBox: rect,
-          confidence: confidence,
-          label: label,
-        ),
-      );
+      if (debugSaveFrames && !_hasLoggedOutputs) {
+        // ignore: avoid_print
+        print(
+            'YOLO keep: label=$label conf=${(confidence * 100).toStringAsFixed(2)} '
+            'obj=${(objectness * 100).toStringAsFixed(2)} '
+            'classProb=${(bestClassScore * 100).toStringAsFixed(2)} '
+            'rawBox=($xCenter,$yCenter,$width,$height)');
+      }
+      detections.add(Detection(
+        boundingBox: rect,
+        confidence: confidence,
+        label: label,
+      ));
     }
+    _hasLoggedOutputs = _hasLoggedOutputs || (debugSaveFrames && detections.isNotEmpty);
 
     return _nonMaxSuppression(detections);
   }
@@ -581,6 +611,21 @@ class _YoloIsolateHandler {
     double width,
     double height,
   ) {
+    // Model outputs are typically normalized; if they look like pixel values, normalize them first.
+    final bool isPixelSpace =
+        xCenter > 2 || yCenter > 2 || width > 2 || height > 2;
+    if (isPixelSpace) {
+      xCenter /= _inputWidth;
+      yCenter /= _inputHeight;
+      width /= _inputWidth;
+      height /= _inputHeight;
+    }
+
+    xCenter *= _inputWidth;
+    yCenter *= _inputHeight;
+    width *= _inputWidth;
+    height *= _inputHeight;
+
     final double padX = _letterboxPadX.toDouble();
     final double padY = _letterboxPadY.toDouble();
     final double scale = _letterboxScale == 0 ? 1.0 : _letterboxScale;
@@ -606,6 +651,20 @@ class _YoloIsolateHandler {
       (right / srcWidth).clamp(0.0, 1.0),
       (bottom / srcHeight).clamp(0.0, 1.0),
     );
+  }
+
+  double _readChannelFirst(
+    Float32List buffer,
+    int channels,
+    int boxes,
+    int channelIndex,
+    int boxIndex,
+  ) {
+    final int idx = channelIndex * boxes + boxIndex;
+    if (idx >= buffer.length) {
+      return 0.0;
+    }
+    return buffer[idx];
   }
 
   List<Detection> _nonMaxSuppression(List<Detection> detections) {
@@ -644,6 +703,8 @@ class _YoloIsolateHandler {
   }
 
   int _clampToUint8(double value) => value.clamp(0, 255).toInt();
+
+  double _sigmoid(double x) => 1 / (1 + math.exp(-x));
 
   dynamic _createZeroTensor(List<int> shape, [int depth = 0]) {
     final size = shape[depth];
