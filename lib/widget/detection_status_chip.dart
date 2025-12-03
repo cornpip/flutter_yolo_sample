@@ -24,7 +24,7 @@ class DetectionStatusChip extends StatelessWidget {
           const Icon(Icons.camera_alt, color: Colors.white70, size: 16),
           const SizedBox(width: 6),
           Text(
-            isDetectionActive ? '$detectionCount objects' : '탐지 대기',
+            isDetectionActive ? '$detectionCount objects' : 'Detection idle',
             style: const TextStyle(color: Colors.white70),
           ),
         ],

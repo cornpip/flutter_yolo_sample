@@ -6,9 +6,8 @@ import 'package:yolo/common/colors.dart';
 import '../detector/yolo_detector.dart';
 import '../models/detection.dart';
 import '../widget/camera_control_buttons.dart';
-import '../widget/camera_error_view.dart';
-import '../widget/camera_idle_view.dart';
-import '../widget/camera_preview_view.dart';
+import '../view/camera_error_view.dart';
+import '../view/camera_preview_view.dart';
 import '../widget/detection_status_chip.dart';
 
 class YoloCameraPage extends StatefulWidget {
@@ -51,7 +50,7 @@ class _YoloCameraPageState extends State<YoloCameraPage>
   Future<void> _initialize() async {
     try {
       if (widget.cameras.isEmpty) {
-        throw StateError('기기에 사용 가능한 카메라가 없습니다.');
+        throw StateError('No available cameras on this device.');
       }
       _currentCameraIndex = _preferredCameraIndex;
       await _detector.initialize();
@@ -74,7 +73,7 @@ class _YoloCameraPageState extends State<YoloCameraPage>
 
   CameraDescription get _preferredCamera {
     if (widget.cameras.isEmpty) {
-      throw StateError('기기에 카메라가 없습니다.');
+      throw StateError('No cameras found on this device.');
     }
     return widget.cameras.firstWhere(
       (camera) => camera.lensDirection == CameraLensDirection.back,
@@ -84,7 +83,7 @@ class _YoloCameraPageState extends State<YoloCameraPage>
 
   int get _preferredCameraIndex {
     if (widget.cameras.isEmpty) {
-      throw StateError('기기에 카메라가 없습니다.');
+      throw StateError('No cameras found on this device.');
     }
     final index = widget.cameras.indexWhere(
       (camera) => camera.lensDirection == CameraLensDirection.back,
@@ -198,9 +197,13 @@ class _YoloCameraPageState extends State<YoloCameraPage>
   @override
   Widget build(BuildContext context) {
     final controller = _cameraController;
+    final isCameraAvailable = _isCameraActive &&
+        controller != null &&
+        controller.value.isInitialized;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: DEFAULT_BG,
       appBar: AppBar(
         scrolledUnderElevation: 0,
         elevation: 0,
@@ -219,33 +222,45 @@ class _YoloCameraPageState extends State<YoloCameraPage>
       body: SafeArea(
         child: _errorMessage != null
             ? CameraErrorView(
-                message: _errorMessage ?? '알 수 없는 오류가 발생했어요.',
+                message: _errorMessage ?? 'An unknown error occurred.',
               )
             : _isInitializing
                 ? const Center(child: CircularProgressIndicator())
-                : (_isCameraActive &&
-                        controller != null &&
-                        controller.value.isInitialized)
-                    ? _buildCameraPreview(controller)
-                    : _buildCameraIdle(),
+                : AnimatedPadding(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    padding: EdgeInsets.only(bottom: bottomInset),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 20.w),
+                      width: double.infinity,
+                      height: double.infinity,
+                      decoration: const BoxDecoration(color: DEFAULT_BG),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return SingleChildScrollView(
+                            padding: EdgeInsets.only(bottom: 12.h, top: 12.h),
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight,
+                              ),
+                              child: CameraPreviewView(
+                                controller: controller,
+                                detections: _detections,
+                                statusChip: DetectionStatusChip(
+                                  detectionCount: _detections.length,
+                                  isDetectionActive: _isDetectionActive,
+                                ),
+                                controls: _buildControlButtons(),
+                                isCameraAvailable: isCameraAvailable,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
       ),
     );
-  }
-
-  Widget _buildCameraPreview(CameraController controller) {
-    return CameraPreviewView(
-      controller: controller,
-      detections: _detections,
-      statusChip: DetectionStatusChip(
-        detectionCount: _detections.length,
-        isDetectionActive: _isDetectionActive,
-      ),
-      controls: _buildControlButtons(),
-    );
-  }
-
-  Widget _buildCameraIdle() {
-    return CameraIdleView(controls: _buildControlButtons());
   }
 
   Widget _buildControlButtons() {

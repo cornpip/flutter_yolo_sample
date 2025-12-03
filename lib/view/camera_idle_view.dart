@@ -12,7 +12,7 @@ class CameraIdleView extends StatelessWidget {
         const Expanded(
           child: Center(
             child: Text(
-              '촬영 버튼을 눌러 카메라를 시작하세요.',
+              'Tap the capture button to start the camera.',
               style: TextStyle(color: Colors.white70),
             ),
           ),
