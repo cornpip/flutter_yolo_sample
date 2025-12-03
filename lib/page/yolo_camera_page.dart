@@ -2,8 +2,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:yolo/paint/detection_painter.dart';
 
-import 'detector/yolo_detector.dart';
-import 'models/detection.dart';
+import '../detector/yolo_detector.dart';
+import '../models/detection.dart';
 
 class YoloCameraPage extends StatefulWidget {
   const YoloCameraPage({
