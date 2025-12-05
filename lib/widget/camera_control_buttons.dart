@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class CameraControlButtons extends StatelessWidget {
   const CameraControlButtons({
@@ -46,7 +47,7 @@ class CameraControlButtons extends StatelessWidget {
                     isCameraActive ? Icons.stop : Icons.camera,
                     color: Colors.black,
                   ),
-                  label: Text(isCameraActive ? 'Stop capture' : 'Start capture'),
+                  label: Text(isCameraActive ? 'Stop Capture' : 'Start Capture'),
                 ),
               ),
               const SizedBox(width: 16),
@@ -71,7 +72,7 @@ class CameraControlButtons extends StatelessWidget {
                     color: Colors.black,
                   ),
                   label:
-                      Text(isDetectionActive ? 'Stop detection' : 'Start YOLO detection'),
+                      Text(isDetectionActive ? 'Stop Detection' : 'Start Detection'),
                 ),
               ),
             ],
@@ -82,10 +83,10 @@ class CameraControlButtons extends StatelessWidget {
                 ? null
                 : onSwitchCamera,
             style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
             ),
             icon: const Icon(Icons.cameraswitch),
-            label: const Text('Switch front/back camera'),
+            label: const Text('Switch Camera'),
           ),
         ],
       ),

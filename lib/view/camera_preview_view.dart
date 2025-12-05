@@ -24,14 +24,11 @@ class CameraPreviewView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final previewSize = controller?.value.previewSize;
+    final isControllerReady = controller?.value.isInitialized == true;
+    final previewSize = isControllerReady ? controller!.value.previewSize : null;
     final previewSizeText = previewSize != null
         ? '${previewSize.width.toStringAsFixed(0)} x ${previewSize.height.toStringAsFixed(0)}'
         : 'Unknown';
-    final aspectRatio =
-        controller != null && controller!.value.aspectRatio != 0
-            ? controller!.value.aspectRatio
-            : (4 / 3);
     final isBackCamera =
         controller?.description.lensDirection == CameraLensDirection.back;
     final borderRadius = BorderRadius.circular(20.r);
@@ -75,12 +72,15 @@ class CameraPreviewView extends StatelessWidget {
                               )
                             else
                               AspectRatio(
-                                aspectRatio: 1 / aspectRatio,
+                                aspectRatio: 3 / 4,
                                 child: Container(
-                                  color: Colors.black26,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black26,
+                                    borderRadius: borderRadius,
+                                  ),
                                   alignment: Alignment.center,
                                   child: const Text(
-                                    'Camera is initializing...',
+                                    'start capture',
                                     style: TextStyle(color: Colors.white70),
                                   ),
                                 ),

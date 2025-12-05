@@ -11,10 +11,7 @@ import '../view/camera_preview_view.dart';
 import '../widget/detection_status_chip.dart';
 
 class YoloCameraPage extends StatefulWidget {
-  const YoloCameraPage({
-    super.key,
-    required this.cameras,
-  });
+  const YoloCameraPage({super.key, required this.cameras});
 
   final List<CameraDescription> cameras;
 
@@ -99,6 +96,13 @@ class _YoloCameraPageState extends State<YoloCameraPage>
       if (previousController.value.isStreamingImages) {
         await previousController.stopImageStream();
       }
+      if (mounted) {
+        setState(() {
+          _cameraController = null;
+        });
+      } else {
+        _cameraController = null;
+      }
       await previousController.dispose();
     }
     final controller = CameraController(
@@ -141,27 +145,29 @@ class _YoloCameraPageState extends State<YoloCameraPage>
     _isProcessingFrame = true;
     _detector
         .predict(
-      cameraImage,
-      sensorOrientation: controller.description.sensorOrientation,
-      lensDirection: controller.description.lensDirection,
-    )
+          cameraImage,
+          sensorOrientation: controller.description.sensorOrientation,
+          lensDirection: controller.description.lensDirection,
+        )
         .then((detections) {
-      if (mounted) {
-        setState(() {
-          _detections = detections;
+          if (mounted) {
+            setState(() {
+              _detections = detections;
+            });
+          }
+        })
+        .catchError((Object error) {
+          if (mounted) {
+            setState(() {
+              _errorMessage ??= '$error';
+            });
+          } else {
+            _errorMessage ??= '$error';
+          }
+        })
+        .whenComplete(() {
+          _isProcessingFrame = false;
         });
-      }
-    }).catchError((Object error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage ??= '$error';
-        });
-      } else {
-        _errorMessage ??= '$error';
-      }
-    }).whenComplete(() {
-      _isProcessingFrame = false;
-    });
   }
 
   @override
@@ -175,10 +181,18 @@ class _YoloCameraPageState extends State<YoloCameraPage>
       if (controller.value.isStreamingImages) {
         controller.stopImageStream();
       }
+      if (mounted) {
+        setState(() {
+          _cameraController = null;
+          _isCameraActive = false;
+          _isDetectionActive = false;
+        });
+      } else {
+        _cameraController = null;
+        _isCameraActive = false;
+        _isDetectionActive = false;
+      }
       controller.dispose();
-      _cameraController = null;
-      _isCameraActive = false;
-      _isDetectionActive = false;
     } else if (state == AppLifecycleState.resumed) {
       if (_isCameraActive) {
         _initializeCamera(_currentCamera);
@@ -197,9 +211,8 @@ class _YoloCameraPageState extends State<YoloCameraPage>
   @override
   Widget build(BuildContext context) {
     final controller = _cameraController;
-    final isCameraAvailable = _isCameraActive &&
-        controller != null &&
-        controller.value.isInitialized;
+    final isCameraAvailable =
+        _isCameraActive && controller != null && controller.value.isInitialized;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
@@ -225,40 +238,40 @@ class _YoloCameraPageState extends State<YoloCameraPage>
                 message: _errorMessage ?? 'An unknown error occurred.',
               )
             : _isInitializing
-                ? const Center(child: CircularProgressIndicator())
-                : AnimatedPadding(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    padding: EdgeInsets.only(bottom: bottomInset),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(horizontal: 20.w),
-                      width: double.infinity,
-                      height: double.infinity,
-                      decoration: const BoxDecoration(color: DEFAULT_BG),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return SingleChildScrollView(
-                            padding: EdgeInsets.only(bottom: 12.h, top: 12.h),
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                minHeight: constraints.maxHeight,
-                              ),
-                              child: CameraPreviewView(
-                                controller: controller,
-                                detections: _detections,
-                                statusChip: DetectionStatusChip(
-                                  detectionCount: _detections.length,
-                                  isDetectionActive: _isDetectionActive,
-                                ),
-                                controls: _buildControlButtons(),
-                                isCameraAvailable: isCameraAvailable,
-                              ),
+            ? const Center(child: CircularProgressIndicator())
+            : AnimatedPadding(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                padding: EdgeInsets.only(bottom: bottomInset),
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 20.w),
+                  width: double.infinity,
+                  height: double.infinity,
+                  decoration: const BoxDecoration(color: DEFAULT_BG),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        padding: EdgeInsets.only(bottom: 12.h, top: 12.h),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: CameraPreviewView(
+                            controller: controller,
+                            detections: _detections,
+                            statusChip: DetectionStatusChip(
+                              detectionCount: _detections.length,
+                              isDetectionActive: _isDetectionActive,
                             ),
-                          );
-                        },
-                      ),
-                    ),
+                            controls: _buildControlButtons(),
+                            isCameraAvailable: isCameraAvailable,
+                          ),
+                        ),
+                      );
+                    },
                   ),
+                ),
+              ),
       ),
     );
   }
@@ -341,29 +354,25 @@ class _YoloCameraPageState extends State<YoloCameraPage>
     if (mounted) {
       setState(() {
         _isCameraBusy = true;
+        _isCameraActive = false;
+        _isDetectionActive = false;
+        _detections = const [];
       });
     } else {
       _isCameraBusy = true;
+      _isCameraActive = false;
+      _isDetectionActive = false;
+      _detections = const [];
     }
+
+    _cameraController = null;
 
     try {
       if (controller.value.isStreamingImages) {
         await controller.stopImageStream();
       }
       await controller.dispose();
-      _cameraController = null;
       _isProcessingFrame = false;
-      if (mounted) {
-        setState(() {
-          _isCameraActive = false;
-          _isDetectionActive = false;
-          _detections = const [];
-        });
-      } else {
-        _isCameraActive = false;
-        _isDetectionActive = false;
-        _detections = const [];
-      }
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -442,7 +451,10 @@ class _YoloCameraPageState extends State<YoloCameraPage>
   }
 
   Future<void> _switchCamera() async {
-    if (widget.cameras.length < 2 || _isChangingCamera || _isCameraBusy) {
+    if (widget.cameras.length < 2 ||
+        _isChangingCamera ||
+        _isCameraBusy ||
+        !_isCameraActive) {
       return;
     }
     final nextIndex = (_currentCameraIndex + 1) % widget.cameras.length;
@@ -455,6 +467,7 @@ class _YoloCameraPageState extends State<YoloCameraPage>
       _isChangingCamera = true;
       _currentCameraIndex = nextIndex;
     }
+
     try {
       if (_isCameraActive) {
         await _initializeCamera(widget.cameras[nextIndex]);
