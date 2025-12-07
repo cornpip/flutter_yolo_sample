@@ -39,6 +39,8 @@ dependencies:
   image: ^4.5.4
   flutter_screenutil: ^5.9.3
   go_router: ^17.0.0
+  ffi_plugin_look:
+    path: ../ffi_plugin_look
 
 dev_dependencies:
   flutter_test:

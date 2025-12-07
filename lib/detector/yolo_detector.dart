@@ -6,6 +6,7 @@ import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
+import 'package:ffi_plugin_look/ffi_plugin_look.dart' as native_processing;
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -312,12 +313,26 @@ class _YoloIsolateHandler {
     _interpreter.close();
   }
 
-  void _maybeSaveDebugFrame(img.Image image) {
+  void _maybeSaveDebugFrame(Uint8List rgbBytes) {
     _frameCounter++;
     if (_frameCounter % 2 != 0) {
       return;
     }
     try {
+      final img.Image image = img.Image(
+        width: _inputWidth,
+        height: _inputHeight,
+        numChannels: 3,
+      );
+      var srcIndex = 0;
+      for (int y = 0; y < _inputHeight; y++) {
+        for (int x = 0; x < _inputWidth; x++) {
+          final r = rgbBytes[srcIndex++];
+          final g = rgbBytes[srcIndex++];
+          final b = rgbBytes[srcIndex++];
+          image.setPixelRgb(x, y, r, g, b);
+        }
+      }
       final file = File(_debugFramePath);
       file.parent.createSync(recursive: true);
       file.writeAsBytesSync(img.encodePng(image), flush: true);
@@ -326,128 +341,61 @@ class _YoloIsolateHandler {
     }
   }
 
-  img.Image _preprocess(_CameraFrameData frame) {
+  Uint8List _preprocess(_CameraFrameData frame) {
+    if (frame.planes.length < 3) {
+      throw StateError('Expected at least 3 planes for YUV420 frame.');
+    }
     final yPlane = frame.planes[0];
     final uPlane = frame.planes[1];
     final vPlane = frame.planes[2];
 
-    final width = frame.width;
-    final height = frame.height;
-    final imageBuffer = img.Image(
-      width: width,
-      height: height,
-      numChannels: 3,
-    );
-
-    for (int y = 0; y < height; y++) {
-      final uvRow = y ~/ 2;
-      for (int x = 0; x < width; x++) {
-        final uvColumn = x ~/ 2;
-
-        final yIndex = y * yPlane.bytesPerRow + x;
-        final uIndex = uvRow * uPlane.bytesPerRow +
-            uvColumn * (uPlane.bytesPerPixel ?? 1);
-        final vIndex = uvRow * vPlane.bytesPerRow +
-            uvColumn * (vPlane.bytesPerPixel ?? 1);
-
-        final yValue = yPlane.bytes[yIndex];
-        final uValue = uPlane.bytes[uIndex];
-        final vValue = vPlane.bytes[vIndex];
-
-        final r = _clampToUint8(yValue + 1.402 * (vValue - 128));
-        final g = _clampToUint8(
-          yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128),
-        );
-        final b = _clampToUint8(yValue + 1.772 * (uValue - 128));
-
-        imageBuffer.setPixelRgb(x, y, r, g, b);
-      }
-    }
-
-    img.Image oriented = imageBuffer;
-    switch (frame.sensorOrientation) {
-      case 90:
-        oriented = img.copyRotate(imageBuffer, angle: 90);
-        break;
-      case 180:
-        oriented = img.copyRotate(imageBuffer, angle: 180);
-        break;
-      case 270:
-        oriented = img.copyRotate(imageBuffer, angle: 270);
-        break;
-      default:
-        oriented = imageBuffer;
-    }
-
-    if (frame.lensDirection == CameraLensDirection.front) {
-      oriented = img.flipHorizontal(oriented);
-    }
-
-    if (debugSaveFrames) {
-      print("========================================");
-      _maybeSaveDebugFrame(oriented);
-    }
-
-    return oriented;
-  }
-
-  Object _createInputTensor(img.Image image) {
-    final paddedImage = _letterboxImage(
-      image,
+    final native_processing.PreprocessResult result =
+        native_processing.preprocessCameraFrame(
+      yPlane: yPlane.bytes,
+      yRowStride: yPlane.bytesPerRow,
+      uPlane: uPlane.bytes,
+      uRowStride: uPlane.bytesPerRow,
+      uPixelStride: uPlane.bytesPerPixel ?? 1,
+      vPlane: vPlane.bytes,
+      vRowStride: vPlane.bytesPerRow,
+      vPixelStride: vPlane.bytesPerPixel ?? 1,
+      width: frame.width,
+      height: frame.height,
+      rotationDegrees: frame.sensorOrientation,
+      flipHorizontal: frame.lensDirection == CameraLensDirection.front,
       targetWidth: _inputWidth,
       targetHeight: _inputHeight,
     );
+
+    _letterboxScale = result.scale;
+    _letterboxPadX = result.padX;
+    _letterboxPadY = result.padY;
+    _sourceWidth = result.orientedWidth;
+    _sourceHeight = result.orientedHeight;
+
+    final bytes = result.rgbBytes;
+
+    if (debugSaveFrames) {
+      _maybeSaveDebugFrame(bytes);
+    }
+
+    return bytes;
+  }
+
+  Object _createInputTensor(Uint8List rgbBytes) {
     final inputSize = _inputWidth * _inputHeight * 3;
     switch (_inputType) {
       case TensorType.float32:
         final buffer = Float32List(inputSize);
-        _fillFloatInput(buffer, paddedImage);
+        _fillFloatInput(buffer, rgbBytes);
         return _reshapeToNHWC(buffer, _inputHeight, _inputWidth, 3);
       case TensorType.uint8:
         final buffer = Uint8List(inputSize);
-        _fillUint8Input(buffer, paddedImage);
+        _fillUint8Input(buffer, rgbBytes);
         return _reshapeToNHWC(buffer, _inputHeight, _inputWidth, 3);
       default:
         throw UnsupportedError('Unsupported input type: $_inputType');
     }
-  }
-
-  img.Image _letterboxImage(
-    img.Image source, {
-    required int targetWidth,
-    required int targetHeight,
-  }) {
-    final double scale = math.min(
-      targetWidth / source.width,
-      targetHeight / source.height,
-    );
-    _letterboxScale = scale;
-    _sourceWidth = source.width;
-    _sourceHeight = source.height;
-    final int resizedWidth =
-        (source.width * scale).round().clamp(1, targetWidth);
-    final int resizedHeight =
-        (source.height * scale).round().clamp(1, targetHeight);
-    final int padX = ((targetWidth - resizedWidth) / 2).floor();
-    final int padY = ((targetHeight - resizedHeight) / 2).floor();
-    _letterboxPadX = padX;
-    _letterboxPadY = padY;
-
-    final img.Image resized = img.copyResize(
-      source,
-      width: resizedWidth,
-      height: resizedHeight,
-      interpolation: img.Interpolation.linear,
-    );
-
-    final img.Image padded = img.Image(
-      width: targetWidth,
-      height: targetHeight,
-      numChannels: resized.numChannels,
-    );
-    img.compositeImage(padded, resized, dstX: padX, dstY: padY);
-
-    return padded;
   }
 
   List<dynamic> _reshapeToNHWC(
@@ -466,55 +414,47 @@ class _YoloIsolateHandler {
     }, growable: false);
   }
 
-  void _fillFloatInput(Float32List buffer, img.Image image) {
+  void _fillFloatInput(Float32List buffer, Uint8List rgbBytes) {
+    final int pixelCount = _inputWidth * _inputHeight;
     if (_isChannelsLast) {
-      var bufferIndex = 0;
-      for (int y = 0; y < _inputHeight; y++) {
-        for (int x = 0; x < _inputWidth; x++) {
-          final pixel = image.getPixel(x, y);
-          buffer[bufferIndex++] = pixel.r / 255.0;
-          buffer[bufferIndex++] = pixel.g / 255.0;
-          buffer[bufferIndex++] = pixel.b / 255.0;
-        }
+      var srcIndex = 0;
+      var dstIndex = 0;
+      for (int i = 0; i < pixelCount; i++) {
+        buffer[dstIndex++] = rgbBytes[srcIndex++] / 255.0;
+        buffer[dstIndex++] = rgbBytes[srcIndex++] / 255.0;
+        buffer[dstIndex++] = rgbBytes[srcIndex++] / 255.0;
       }
       return;
     }
 
-    final planeSize = _inputWidth * _inputHeight;
-    for (int y = 0; y < _inputHeight; y++) {
-      for (int x = 0; x < _inputWidth; x++) {
-        final pixelIndex = y * _inputWidth + x;
-        final pixel = image.getPixel(x, y);
-        buffer[pixelIndex] = pixel.r / 255.0;
-        buffer[planeSize + pixelIndex] = pixel.g / 255.0;
-        buffer[2 * planeSize + pixelIndex] = pixel.b / 255.0;
-      }
+    final int planeSize = pixelCount;
+    var srcIndex = 0;
+    for (int i = 0; i < planeSize; i++) {
+      buffer[i] = rgbBytes[srcIndex++] / 255.0;
+      buffer[planeSize + i] = rgbBytes[srcIndex++] / 255.0;
+      buffer[2 * planeSize + i] = rgbBytes[srcIndex++] / 255.0;
     }
   }
 
-  void _fillUint8Input(Uint8List buffer, img.Image image) {
+  void _fillUint8Input(Uint8List buffer, Uint8List rgbBytes) {
+    final int pixelCount = _inputWidth * _inputHeight;
     if (_isChannelsLast) {
-      var bufferIndex = 0;
-      for (int y = 0; y < _inputHeight; y++) {
-        for (int x = 0; x < _inputWidth; x++) {
-          final pixel = image.getPixel(x, y);
-          buffer[bufferIndex++] = pixel.r.toInt();
-          buffer[bufferIndex++] = pixel.g.toInt();
-          buffer[bufferIndex++] = pixel.b.toInt();
-        }
+      var srcIndex = 0;
+      var dstIndex = 0;
+      for (int i = 0; i < pixelCount; i++) {
+        buffer[dstIndex++] = rgbBytes[srcIndex++];
+        buffer[dstIndex++] = rgbBytes[srcIndex++];
+        buffer[dstIndex++] = rgbBytes[srcIndex++];
       }
       return;
     }
 
-    final planeSize = _inputWidth * _inputHeight;
-    for (int y = 0; y < _inputHeight; y++) {
-      for (int x = 0; x < _inputWidth; x++) {
-        final pixelIndex = y * _inputWidth + x;
-        final pixel = image.getPixel(x, y);
-        buffer[pixelIndex] = pixel.r.toInt();
-        buffer[planeSize + pixelIndex] = pixel.g.toInt();
-        buffer[2 * planeSize + pixelIndex] = pixel.b.toInt();
-      }
+    final int planeSize = pixelCount;
+    var srcIndex = 0;
+    for (int i = 0; i < planeSize; i++) {
+      buffer[i] = rgbBytes[srcIndex++];
+      buffer[planeSize + i] = rgbBytes[srcIndex++];
+      buffer[2 * planeSize + i] = rgbBytes[srcIndex++];
     }
   }
 

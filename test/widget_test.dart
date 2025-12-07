@@ -7,6 +7,7 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ffi_plugin_look/ffi_plugin_look.dart' as ffi_plugin_look;
 
 void main() {
   testWidgets('Placeholder widget test', (WidgetTester tester) async {
