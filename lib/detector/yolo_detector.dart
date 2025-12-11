@@ -676,6 +676,7 @@ class _YoloIsolateHandler {
     return buffer[idx];
   }
 
+  // Remove duplicate boxes of the same class whose IoU exceeds the nmsThreshold.
   List<Detection> _nonMaxSuppression(List<Detection> detections) {
     detections.sort((a, b) => b.confidence.compareTo(a.confidence));
     final results = <Detection>[];
