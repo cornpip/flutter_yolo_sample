@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -121,7 +123,7 @@ class _YoloCameraPageState extends State<YoloCameraPage>
       description,
       ResolutionPreset.veryHigh,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup: ImageFormatGroup.yuv420, // IOS NV12 preprocess handles it
     );
 
     _cameraController = controller;
@@ -168,10 +170,13 @@ class _YoloCameraPageState extends State<YoloCameraPage>
 
     _isProcessingFrame = true;
     final detectionStart = DateTime.now();
+    final rotationDegrees = Platform.isIOS
+        ? 0 // iOS preview is already oriented; avoid double rotation on boxes
+        : controller.description.sensorOrientation;
     _detector
         .predict(
           cameraImage,
-          sensorOrientation: controller.description.sensorOrientation,
+          sensorOrientation: rotationDegrees,
           lensDirection: controller.description.lensDirection,
         )
         .then((detections) {

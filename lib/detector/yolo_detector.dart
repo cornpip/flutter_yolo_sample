@@ -375,12 +375,48 @@ class _YoloIsolateHandler {
   }
 
   Uint8List _preprocess(_CameraFrameData frame) {
-    if (frame.planes.length < 3) {
-      throw StateError('Expected at least 3 planes for YUV420 frame.');
+    if (frame.planes.isEmpty) {
+      throw StateError('Camera frame contains no planes.');
     }
     final yPlane = frame.planes[0];
-    final uPlane = frame.planes[1];
-    final vPlane = frame.planes[2];
+
+    // Android: YUV420 (3-plane). iOS: NV12 (2-plane, UV interleaved).
+    _PlaneBuffer uPlane;
+    _PlaneBuffer vPlane;
+    if (frame.planes.length >= 3) {
+      uPlane = frame.planes[1];
+      vPlane = frame.planes[2];
+    } else if (frame.planes.length == 2) {
+      final uvPlane = frame.planes[1];
+      final uvBytes = uvPlane.bytes;
+      if (uvBytes.length < 2) {
+        throw StateError('UV plane is too small for NV12 frame.');
+      }
+      final uvStride = uvPlane.bytesPerPixel ?? 2;
+      // Split interleaved UV into U/V views so native code can read with pixelStride=2.
+      uPlane = _PlaneBuffer(
+        bytes: Uint8List.view(
+          uvBytes.buffer,
+          uvBytes.offsetInBytes,
+          uvBytes.length - 1,
+        ),
+        bytesPerRow: uvPlane.bytesPerRow,
+        bytesPerPixel: uvStride,
+      );
+      vPlane = _PlaneBuffer(
+        bytes: Uint8List.view(
+          uvBytes.buffer,
+          uvBytes.offsetInBytes + 1,
+          uvBytes.length - 1,
+        ),
+        bytesPerRow: uvPlane.bytesPerRow,
+        bytesPerPixel: uvStride,
+      );
+    } else {
+      throw StateError(
+        'Unsupported plane count (${frame.planes.length}); expected NV12 or YUV420.',
+      );
+    }
 
     final native_processing.PreprocessResult result =
         native_processing.preprocessCameraFrame(
